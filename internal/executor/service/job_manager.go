@@ -29,17 +29,18 @@ func NewJobManager(
 	clusterIdentity context2.ClusterIdentity,
 	jobContext job.JobContext,
 	eventReporter reporter.EventReporter,
-	jobLeaseService LeaseService) *JobManager {
+	jobLeaseService LeaseService,
+) *JobManager {
 	return &JobManager{
 		clusterIdentity: clusterIdentity,
 		jobContext:      jobContext,
 		eventReporter:   eventReporter,
-		jobLeaseService: jobLeaseService}
+		jobLeaseService: jobLeaseService,
+	}
 }
 
 func (m *JobManager) ManageJobLeases() {
 	jobs, err := m.jobContext.GetJobs()
-
 	if err != nil {
 		log.Errorf("Failed to manage job leases due to %s", err)
 		return
@@ -113,7 +114,7 @@ func (m *JobManager) handlePodIssues(allRunningJobs []*job.RunningJob) {
 		if runningJob.Issue != nil {
 			if runningJob.Issue.Reported {
 				if len(runningJob.ActivePods) == 0 {
-					resolved := m.onStuckPodDeleted(runningJob)
+					resolved := m.onPodDeleted(runningJob)
 					if resolved {
 						m.jobContext.MarkIssuesResolved(runningJob)
 					}
@@ -140,12 +141,12 @@ func (m *JobManager) reportJobsWithIssues(allRunningJobs []*job.RunningJob) {
 	}
 
 	for _, runningJob := range allRunningJobs {
-		//Skip already reported
+		// Skip already reported
 		if runningJob.Issue == nil || runningJob.Issue.Reported {
 			continue
 		}
 
-		//Skip those that failed to be reported done
+		// Skip those that failed to be reported done
 		if _, present := jobsFailedToBeReportedDone[runningJob.JobId]; present {
 			continue
 		}
@@ -165,7 +166,8 @@ func (m *JobManager) reportJobsWithIssues(allRunningJobs []*job.RunningJob) {
 	}
 }
 
-func (m *JobManager) onStuckPodDeleted(job *job.RunningJob) (resolved bool) {
+// onPodDeleted handles cases when either a stuck pod was deleted or a pod was preempted
+func (m *JobManager) onPodDeleted(job *job.RunningJob) (resolved bool) {
 	// this method is executed after stuck pod was deleted from the cluster
 	if job.Issue.Retryable {
 		err := m.jobLeaseService.ReturnLease(job.Issue.OriginatingPod, job.Issue.Message)
@@ -181,7 +183,7 @@ func (m *JobManager) onStuckPodDeleted(job *job.RunningJob) (resolved bool) {
 			if pod.UID != job.Issue.OriginatingPod.UID {
 				message = fmt.Sprintf("Peer pod %d stuck.", util.ExtractPodNumber(job.Issue.OriginatingPod))
 			}
-			event := reporter.CreateSimpleJobFailedEvent(pod, message, m.clusterIdentity.GetClusterId())
+			event := reporter.CreateSimpleJobFailedEvent(pod, message, m.clusterIdentity.GetClusterId(), job.Issue.Cause)
 
 			err := m.eventReporter.Report(event)
 			if err != nil {

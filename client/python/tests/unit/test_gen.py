@@ -2,6 +2,7 @@ from armada_client.gen.event_typings import (
     get_all_job_event_classes,
     get_event_states,
     gen_file,
+    get_job_states,
 )
 
 expected_events = [
@@ -16,6 +17,7 @@ expected_events = [
     "JobIngressInfoEvent",
     "JobUnableToScheduleEvent",
     "JobFailedEvent",
+    "JobPreemptedEvent",
     "JobSucceededEvent",
     "JobUtilisationEvent",
     "JobReprioritizingEvent",
@@ -47,6 +49,7 @@ expected_event_states = [
     "reprioritizing",
     "updated",
     "failedCompressed",
+    "preempted",
 ]
 
 expected_import_text = """from enum import Enum
@@ -64,6 +67,7 @@ from armada_client.armada.event_pb2 import (
     JobIngressInfoEvent,
     JobUnableToScheduleEvent,
     JobFailedEvent,
+    JobPreemptedEvent,
     JobSucceededEvent,
     JobUtilisationEvent,
     JobReprioritizingEvent,
@@ -72,10 +76,10 @@ from armada_client.armada.event_pb2 import (
     JobCancelledEvent,
     JobTerminatedEvent,
     JobUpdatedEvent
-)"""
+)
+"""
 
 expected_states_text = '''
-
 
 class EventType(Enum):
     """
@@ -102,10 +106,12 @@ class EventType(Enum):
     reprioritizing = "reprioritizing"
     updated = "updated"
     failedCompressed = "failedCompressed"
+    preempted = "preempted"
 
 '''
 
-expected_union_text = """# Union for the Job Event Types.
+expected_union_text = """
+# Union for the Job Event Types.
 OneOfJobEvent = Union[
     JobSubmittedEvent,
     JobQueuedEvent,
@@ -118,6 +124,7 @@ OneOfJobEvent = Union[
     JobIngressInfoEvent,
     JobUnableToScheduleEvent,
     JobFailedEvent,
+    JobPreemptedEvent,
     JobSucceededEvent,
     JobUtilisationEvent,
     JobReprioritizingEvent,
@@ -128,6 +135,25 @@ OneOfJobEvent = Union[
     JobUpdatedEvent
 ]
 """
+
+expected_jobstates_text = '''
+class JobState(Enum):
+    """
+    Enum for the job states.
+    Used by cancel_jobset.
+    """
+
+    QUEUED = 0
+    PENDING = 1
+    RUNNING = 2
+
+'''
+
+expected_jobstates = [
+    ("QUEUED", 0),
+    ("PENDING", 1),
+    ("RUNNING", 2),
+]
 
 
 def test_event_states():
@@ -140,12 +166,17 @@ def test_union_var():
     assert get_all_job_event_classes() == expected_events
 
 
+def test_job_states():
+    assert get_job_states() == expected_jobstates
+
+
 def test_file_gen():
 
-    import_text, states_text, union_text = gen_file(
-        get_event_states(), get_all_job_event_classes()
+    import_text, states_text, union_text, jobstates_text = gen_file(
+        get_event_states(), get_all_job_event_classes(), get_job_states()
     )
 
     assert import_text == expected_import_text
     assert states_text == expected_states_text
     assert union_text == expected_union_text
+    assert jobstates_text == expected_jobstates_text

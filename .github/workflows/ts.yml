@@ -19,9 +19,12 @@ on:
 jobs:
   ts-lint:
     # TODO(JayF): Determine what nodejs versions we target, and setup matrix-based testing similar to what we do for go
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16.14.2
 
       - name: Check TypeScript formatting
         run: |
@@ -29,9 +32,12 @@ jobs:
           exit $(git status -s -uno | wc -l)
         working-directory: ./internal/lookout/ui
   ts-unit-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16.14.2
 
       - name: Run Unit Tests
         run: |

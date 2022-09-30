@@ -2,7 +2,6 @@ package context
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"regexp"
 	"sort"
@@ -11,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	networking "k8s.io/api/networking/v1"
@@ -21,7 +23,6 @@ import (
 	"k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 
 	"github.com/G-Research/armada/internal/common"
-	"github.com/G-Research/armada/internal/common/util"
 	"github.com/G-Research/armada/internal/executor/configuration"
 	cluster_context "github.com/G-Research/armada/internal/executor/context"
 )
@@ -52,6 +53,7 @@ type FakeClusterContext struct {
 	handlers              []*cache.ResourceEventHandlerFuncs
 	rwLock                sync.RWMutex
 	pods                  map[string]*v1.Pod
+	events                map[string]*v1.Event
 	nodes                 []*v1.Node
 	nodeAvailableResource map[string]common.ComputeResources
 }
@@ -74,6 +76,10 @@ func (*FakeClusterContext) Stop() {
 }
 
 func (c *FakeClusterContext) AddPodEventHandler(handler cache.ResourceEventHandlerFuncs) {
+	c.handlers = append(c.handlers, &handler)
+}
+
+func (c *FakeClusterContext) AddClusterEventEventHandler(handler cache.ResourceEventHandlerFuncs) {
 	c.handlers = append(c.handlers, &handler)
 }
 
@@ -157,34 +163,34 @@ func (c *FakeClusterContext) savePod(pod *v1.Pod) *v1.Pod {
 
 	pod.Status.Phase = v1.PodPending
 	pod.CreationTimestamp = metav1.Now()
-	pod.UID = types.UID("fake-pod--" + util.NewULID()) // ULID is 26 characters, but kubernetes UID can be 36
+	pod.UID = types.UID(uuid.New().String())
 	saved := pod.DeepCopy()
 	c.pods[pod.Name] = saved
 	return saved
 }
 
 func (c *FakeClusterContext) SubmitService(service *v1.Service) (*v1.Service, error) {
-	return nil, fmt.Errorf("Services not implemented in FakeClusterContext")
+	return nil, errors.Errorf("Services not implemented in FakeClusterContext")
 }
 
 func (c *FakeClusterContext) GetServices(pod *v1.Pod) ([]*v1.Service, error) {
-	return nil, fmt.Errorf("Services not implemented in FakeClusterContext")
+	return nil, errors.Errorf("Services not implemented in FakeClusterContext")
 }
 
 func (c *FakeClusterContext) DeleteService(service *v1.Service) error {
-	return fmt.Errorf("Services not implemented in FakeClusterContext")
+	return errors.Errorf("Services not implemented in FakeClusterContext")
 }
 
 func (c *FakeClusterContext) SubmitIngress(ingress *networking.Ingress) (*networking.Ingress, error) {
-	return nil, fmt.Errorf("Ingresses not implemented in FakeClusterContext")
+	return nil, errors.Errorf("Ingresses not implemented in FakeClusterContext")
 }
 
 func (c *FakeClusterContext) GetIngresses(pod *v1.Pod) ([]*networking.Ingress, error) {
-	return nil, fmt.Errorf("Ingresses not implemented in FakeClusterContext")
+	return nil, errors.Errorf("Ingresses not implemented in FakeClusterContext")
 }
 
 func (c *FakeClusterContext) DeleteIngress(ingress *networking.Ingress) error {
-	return fmt.Errorf("Ingresses not implemented in FakeClusterContext")
+	return errors.Errorf("Ingresses not implemented in FakeClusterContext")
 }
 
 func (c *FakeClusterContext) updateStatus(saved *v1.Pod, phase v1.PodPhase, state v1.ContainerState) (*v1.Pod, *v1.Pod) {
@@ -239,7 +245,21 @@ func (c *FakeClusterContext) AddAnnotation(pod *v1.Pod, annotations map[string]s
 
 	p, found := c.pods[pod.Name]
 	if !found {
-		return fmt.Errorf("Missing pod to annotate %v", pod.Name)
+		return errors.Errorf("missing pod to annotate: %s", pod.Name)
+	}
+	for k, v := range annotations {
+		p.Annotations[k] = v
+	}
+	return nil
+}
+
+func (c *FakeClusterContext) AddClusterEventAnnotation(event *v1.Event, annotations map[string]string) error {
+	c.rwLock.Lock()
+	defer c.rwLock.Unlock()
+
+	p, found := c.events[event.Name]
+	if !found {
+		return errors.Errorf("missing event to annotate: %s", event.Name)
 	}
 	for k, v := range annotations {
 		p.Annotations[k] = v
@@ -287,7 +307,8 @@ func (c *FakeClusterContext) addNodes(specs []*NodeSpec) {
 				},
 				Status: v1.NodeStatus{
 					Allocatable: s.Allocatable,
-				}}
+				},
+			}
 			c.nodes = append(c.nodes, node)
 			c.nodeAvailableResource[node.Name] = common.FromResourceList(s.Allocatable)
 		}

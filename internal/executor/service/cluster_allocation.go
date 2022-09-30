@@ -3,6 +3,8 @@ package service
 import (
 	"fmt"
 
+	"github.com/G-Research/armada/pkg/api"
+
 	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -31,15 +33,16 @@ func NewClusterAllocationService(
 	leaseService LeaseService,
 	utilisationService utilisation.UtilisationService,
 	submitter job.Submitter,
-	etcdHealthMonitor healthmonitor.EtcdLimitHealthMonitor) *ClusterAllocationService {
-
+	etcdHealthMonitor healthmonitor.EtcdLimitHealthMonitor,
+) *ClusterAllocationService {
 	return &ClusterAllocationService{
 		leaseService:       leaseService,
 		eventReporter:      eventReporter,
 		utilisationService: utilisationService,
 		clusterContext:     clusterContext,
 		submitter:          submitter,
-		etcdHealthMonitor:  etcdHealthMonitor}
+		etcdHealthMonitor:  etcdHealthMonitor,
+	}
 }
 
 func (allocationService *ClusterAllocationService) AllocateSpareClusterCapacity() {
@@ -118,7 +121,7 @@ func (allocationService *ClusterAllocationService) processFailedJobs(failedSubmi
 		if details.Recoverable {
 			allocationService.returnLease(details.Pod, fmt.Sprintf("Failed to submit pod because %s", message))
 		} else {
-			failEvent := reporter.CreateSimpleJobFailedEvent(details.Pod, message, allocationService.clusterContext.GetClusterId())
+			failEvent := reporter.CreateSimpleJobFailedEvent(details.Pod, message, allocationService.clusterContext.GetClusterId(), api.Cause_Error)
 			err := allocationService.eventReporter.Report(failEvent)
 
 			if err == nil {
@@ -132,7 +135,6 @@ func (allocationService *ClusterAllocationService) processFailedJobs(failedSubmi
 
 func (allocationService *ClusterAllocationService) returnLease(pod *v1.Pod, reason string) {
 	err := allocationService.leaseService.ReturnLease(pod, reason)
-
 	if err != nil {
 		log.Errorf("Failed to return lease for job %s because %s", util.ExtractJobId(pod), err)
 	}

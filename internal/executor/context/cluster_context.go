@@ -42,6 +42,7 @@ type ClusterContext interface {
 	ClusterIdentity
 
 	AddPodEventHandler(handler cache.ResourceEventHandlerFuncs)
+	AddClusterEventEventHandler(handler cache.ResourceEventHandlerFuncs)
 	GetBatchPods() ([]*v1.Pod, error)
 	GetAllPods() ([]*v1.Pod, error)
 	GetActiveBatchPods() ([]*v1.Pod, error)
@@ -60,6 +61,7 @@ type ClusterContext interface {
 	DeleteIngress(ingress *networking.Ingress) error
 
 	AddAnnotation(pod *v1.Pod, annotations map[string]string) error
+	AddClusterEventAnnotation(event *v1.Event, annotations map[string]string) error
 
 	Stop()
 }
@@ -94,8 +96,8 @@ func NewClusterContext(
 	configuration configuration.ApplicationConfiguration,
 	minTimeBetweenRepeatDeletionCalls time.Duration,
 	kubernetesClientProvider cluster.KubernetesClientProvider,
-	etcdHealthMonitor healthmonitor.EtcdLimitHealthMonitor) *KubernetesClusterContext {
-
+	etcdHealthMonitor healthmonitor.EtcdLimitHealthMonitor,
+) *KubernetesClusterContext {
 	kubernetesClient := kubernetesClientProvider.Client()
 
 	factory := informers.NewSharedInformerFactoryWithOptions(kubernetesClient, 0)
@@ -128,7 +130,7 @@ func NewClusterContext(
 		},
 	})
 
-	//Use node informer so it is initialized properly
+	// Use node informer so it is initialised properly
 	context.nodeInformer.Lister()
 	context.serviceInformer.Lister()
 	context.ingressInformer.Lister()
@@ -154,6 +156,10 @@ func indexPodByUID(obj interface{}) (strings []string, err error) {
 
 func (c *KubernetesClusterContext) AddPodEventHandler(handler cache.ResourceEventHandlerFuncs) {
 	c.podInformer.Informer().AddEventHandler(handler)
+}
+
+func (c *KubernetesClusterContext) AddClusterEventEventHandler(handler cache.ResourceEventHandlerFuncs) {
+	c.eventInformer.Informer().AddEventHandler(handler)
 }
 
 func (c *KubernetesClusterContext) Stop() {
@@ -191,7 +197,7 @@ func (c *KubernetesClusterContext) GetPodEvents(pod *v1.Pod) ([]*v1.Event, error
 	if err != nil {
 		return nil, err
 	}
-	eventsTyped := []*v1.Event{}
+	var eventsTyped []*v1.Event
 	for _, untyped := range events {
 		typed, ok := untyped.(*v1.Event)
 		if ok {
@@ -220,7 +226,6 @@ func (c *KubernetesClusterContext) GetNodeStatsSummary(ctx context.Context, node
 
 	res := request.Do(ctx)
 	rawJson, err := res.Raw()
-
 	if err != nil {
 		return nil, fmt.Errorf("request error %s (body %s)", err, string(rawJson))
 	}
@@ -234,7 +239,6 @@ func (c *KubernetesClusterContext) GetNodeStatsSummary(ctx context.Context, node
 }
 
 func (c *KubernetesClusterContext) SubmitPod(pod *v1.Pod, owner string, ownerGroups []string) (*v1.Pod, error) {
-
 	// If a health monitor is provided, reject pods when etcd is at its hard limit.
 	if c.etcdHealthMonitor != nil && !c.etcdHealthMonitor.IsWithinHardHealthLimit() {
 		err := errors.WithStack(&armadaerrors.ErrCreateResource{
@@ -252,7 +256,6 @@ func (c *KubernetesClusterContext) SubmitPod(pod *v1.Pod, owner string, ownerGro
 	}
 
 	returnedPod, err := ownerClient.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{})
-
 	if err != nil {
 		c.submittedPods.Delete(util.ExtractPodKey(pod))
 	}
@@ -277,7 +280,28 @@ func (c *KubernetesClusterContext) AddAnnotation(pod *v1.Pod, annotations map[st
 	if err != nil {
 		return err
 	}
-	_, err = c.kubernetesClient.CoreV1().Pods(pod.Namespace).Patch(context.Background(), pod.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{})
+	_, err = c.kubernetesClient.CoreV1().
+		Pods(pod.Namespace).
+		Patch(context.Background(), pod.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *KubernetesClusterContext) AddClusterEventAnnotation(event *v1.Event, annotations map[string]string) error {
+	patch := &domain.Patch{
+		MetaData: metav1.ObjectMeta{
+			Annotations: annotations,
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	_, err = c.kubernetesClient.CoreV1().
+		Events(event.Namespace).
+		Patch(context.Background(), event.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
 		return err
 	}
